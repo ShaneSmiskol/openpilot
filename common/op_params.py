@@ -76,6 +76,7 @@ class opParams:
                         # 'lane_speed_alerts': Param('silent', str, 'Can be: (\'off\', \'silent\', \'audible\')\n'
                         #                                           'Whether you want openpilot to alert you of faster-traveling adjacent lanes'),
                         'upload_on_hotspot': Param(False, bool, 'If False, openpilot will not upload driving data while connected to your phone\'s hotspot'),
+                        'steer_fault_fix': Param(False, bool, live=True),
                         'enable_long_derivative': Param(False, bool, 'If you have longitudinal overshooting, enable this! This enables derivative-based\n'
                                                                      'integral wind-down to help reduce overshooting within the long PID loop'),
                         'disengage_on_gas': Param(False, bool, 'Whether you want openpilot to disengage on gas input or not'),
@@ -91,6 +92,28 @@ class opParams:
                         'support_white_panda': Param(False, bool, 'Enable this to allow engagement with the deprecated white panda.\n'
                                                                   'localizer might not work correctly'),
                         'disable_charging': Param(30, NUMBER, 'How many hours until charging is disabled while idle'),
+                        # 'send_max_accel': Param(False, bool, 'Send 1.5m/s/s when des. accel is above coast accel/using pedal. Else just offsets apply_accel by 0.06*3', live=True),
+                        # 'always_apply_accel_offset': Param(False, bool, 'Whether to always offset accel by 0.06, only at low speed', live=True),
+                        '0_coast_accel': Param(0.538, NUMBER, 'coast accel threshold at 0 (default: 0.538)', live=True),
+                        # 'apply_accel': Param(0, NONE_OR_NUMBER, live=True),
+                        'apply_gas': Param(0, NONE_OR_NUMBER, live=True),
+                        'lat_p': Param(.1, NUMBER, live=True),
+                        'lat_i': Param(.01, NUMBER, live=True),
+                        'lat_d': Param(.1, NUMBER, live=True),
+                        'lat_f_multiplier': Param(1, NUMBER, live=True),
+                        'gas_max': Param(0.5, NUMBER, '0.5 is stock (1.5 m/s/s), 0.666_ is 2.0 m/s/s', live=True),
+                        # 'ff_function': Param(0, int, '0: original\n'
+                        #                              '1: original but fitted up to 25 mph so the transition should be smoother\n'
+                        #                              '2: original fitted to only 22 mph\n'
+                        #                              '3: fitted to 22 mph with more data, reduced gas FURTHER around 0 accel\n'
+                        #                              '4: Average of last two functions (too fast, too slow)\n'
+                        #                              '5: Less gas under 5 mph and low accel, more gas above 5 mph and high accel\n'
+                        #                              '6: 5 but less gas all around\n'
+                        #                              '7: 4 but more coefficients', live=True),
+                        'coast_smoother': Param(False, bool, 'Smoothly ramps up gas output across the coasting accel at that speed', live=True),
+                        'convert_accel_to_gas': Param(False, bool, 'If False no gas is ever commanded, only use apply_accel with no + offset', live=True),
+                        'coast_spread': Param(0.08, NUMBER, live=True),
+                        'max_accel_gap': Param(1.0, NUMBER, 'In m/s/s, how big of a gap between desired and actual accel until we apply gas (as well as not braking)', live=True),
 
                         'prius_use_pid': Param(False, bool, 'This enables the PID lateral controller with new a experimental derivative tune\n'
                                                             'False: stock INDI, True: TSS2-tuned PID'),

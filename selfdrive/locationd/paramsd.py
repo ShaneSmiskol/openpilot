@@ -40,7 +40,7 @@ class ParamsLearner:
       yaw_rate_std = msg.angularVelocityCalibrated.std[2]
 
       if self.active:
-        if msg.inputsOK and msg.posenetOK and msg.status == KalmanStatus.valid:
+        if msg.inputsOK and msg.posenetOK:
           self.kf.predict_and_observe(t,
                                       ObservationKind.ROAD_FRAME_YAW_RATE,
                                       np.array([[[-yaw_rate]]]),

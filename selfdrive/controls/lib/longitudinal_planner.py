@@ -149,7 +149,7 @@ class Planner():
 
     self.v_acc_future = min(possible_futures)
 
-  def update(self, sm, CP, VM, PP):
+  def update(self, sm, CP):
     """Gets called when new radarState is available"""
     cur_time = sec_since_boot()
     v_ego = sm['carState'].vEgo
