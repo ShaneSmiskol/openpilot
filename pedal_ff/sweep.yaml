@@ -1,0 +1,43 @@
+program: pedal_ff.py
+project: pedal-fix
+method: bayes
+metric:
+  name: mae
+  goal: minimize
+
+parameters:
+  dropout_1:
+    distribution: uniform
+    min: 0.0
+    max: 0.2
+  dropout_2:
+    distribution: uniform
+    min: 0.0
+    max: 0.2
+
+  dense_1:
+    distribution: int_uniform
+    min: 1
+    max: 12
+  dense_2:
+    distribution: int_uniform
+    min: 1
+    max: 16
+
+  optimizer:
+    distribution: categorical
+    values:
+      - adam
+      - adadelta
+  batch_size:
+    distribution: int_uniform
+    min: 2
+    max: 512
+  learning_rate:
+    distribution: uniform
+    min: 0.0001
+    max: 1.0
+  epochs:
+    distribution: int_uniform
+    min: 1
+    max: 1000

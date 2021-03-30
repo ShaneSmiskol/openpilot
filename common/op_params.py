@@ -92,12 +92,24 @@ class opParams:
                                                                   'localizer might not work correctly'),
                         'slowdown_for_curves': Param(True, bool, 'Whether your car will slow down for curves using the old planner code from 0.5/0.6'),
                         'steer_fault_fix': Param(True, bool, live=True),
+                        'lat_p': Param(0.05, VT.number, live=True),
+                        'lat_i': Param(0.01, VT.number, live=True),
+                        'lat_d': Param(0.1, VT.number, live=True),
 
                         'prius_use_pid': Param(False, bool, 'This enables the PID lateral controller with new a experimental derivative tune\n'
                                                             'False: stock INDI, True: TSS2-tuned PID'),
                         'use_lqr': Param(False, bool, 'Enable this to use LQR as your lateral controller over default with any car'),
                         'corollaTSS2_use_indi': Param(False, bool, 'Enable this to use INDI for lat with your TSS2 Corolla'),
                         'rav4TSS2_use_indi': Param(False, bool, 'Enable this to use INDI for lat with your TSS2 RAV4'),
+
+                        'long_kp_multiplier': Param(1, VT.number, live=True),
+                        'long_ki_multiplier': Param(1, VT.number, live=True),
+                        'loc_accel': Param(None, VT.none_or_number, 'Converted to gas with function first then sent to interceptor as gas (Max is about 1.5 m/s/s)', live=True),
+                        'apply_gas': Param(None, VT.none_or_number, 'Raw gas percent sent to interceptor (0 to 1). Overrides loc_accel', live=True),
+                        'min_pedal_accel': Param(None, VT.none_or_number, live=True),
+                        'briskspirit_long_tune': Param(False, bool, live=True),
+                        'gas_max': Param(0.5, VT.number, live=True),
+
                         'standstill_hack': Param(False, bool, 'Some cars support stop and go, you just need to enable this')}
 
     self._params_file = '/data/op_params.json'

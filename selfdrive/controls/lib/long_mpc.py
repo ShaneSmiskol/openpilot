@@ -95,7 +95,7 @@ class LongitudinalMpc():
 
     # Calculate mpc
     t = sec_since_boot()
-    TR = self.dynamic_follow.update(CS, self.libmpc)  # update dynamic follow
+    TR = 1.8  # self.dynamic_follow.update(CS, self.libmpc)  # update dynamic follow
     n_its = self.libmpc.run_mpc(self.cur_state, self.mpc_solution, self.a_lead_tau, a_lead, TR)
     duration = int((sec_since_boot() - t) * 1e9)
 

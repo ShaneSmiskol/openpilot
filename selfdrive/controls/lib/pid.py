@@ -20,6 +20,8 @@ class LatPIDController():
     self._k_d = k_d  # derivative gain
     self.k_f = k_f  # feedforward gain
 
+    self.op_params = opParams()
+
     self.pos_limit = pos_limit
     self.neg_limit = neg_limit
 
@@ -33,15 +35,18 @@ class LatPIDController():
 
   @property
   def k_p(self):
-    return interp(self.speed, self._k_p[0], self._k_p[1])
+    return self.op_params.get('lat_p')
+    # return interp(self.speed, self._k_p[0], self._k_p[1])
 
   @property
   def k_i(self):
-    return interp(self.speed, self._k_i[0], self._k_i[1])
+    return self.op_params.get('lat_i')
+    # return interp(self.speed, self._k_i[0], self._k_i[1])
 
   @property
   def k_d(self):
-    return interp(self.speed, self._k_d[0], self._k_d[1])
+    return self.op_params.get('lat_d')
+    # return interp(self.speed, self._k_d[0], self._k_d[1])
 
   def _check_saturation(self, control, check_saturation, error):
     saturated = (control < self.neg_limit) or (control > self.pos_limit)
@@ -130,11 +135,15 @@ class LongPIDController:
 
   @property
   def k_p(self):
-    return interp(self.speed, self._k_p[0], self._k_p[1])
+    if self.op_params.get('briskspirit_long_tune'):
+      return interp(self.speed, [0., 5., 20.], [1.3, 1.0, 0.7]) * self.op_params.get('long_kp_multiplier')
+    return interp(self.speed, self._k_p[0], self._k_p[1]) * self.op_params.get('long_kp_multiplier')
 
   @property
   def k_i(self):
-    return interp(self.speed, self._k_i[0], self._k_i[1])
+    if self.op_params.get('briskspirit_long_tune'):
+      return interp(self.speed, [0., 5., 12., 20., 27.], [.35, .23, .20, .17, .1]) * self.op_params.get('long_ki_multiplier')
+    return interp(self.speed, self._k_i[0], self._k_i[1]) * self.op_params.get('long_ki_multiplier')
 
   @property
   def k_d(self):
@@ -193,6 +202,8 @@ class LongPIDController:
           self.id += d
 
     control = self.p + self.f + self.id
+    if self.op_params.get('loc_accel') is not None:
+      control = self.op_params.get('loc_accel')
     if self.convert is not None:
       control = self.convert(control, speed=self.speed)
 
