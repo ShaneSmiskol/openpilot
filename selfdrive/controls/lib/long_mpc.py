@@ -9,6 +9,7 @@ from selfdrive.controls.lib.longitudinal_mpc import libmpc_py
 from selfdrive.controls.lib.drive_helpers import MPC_COST_LONG
 
 LOG_MPC = os.environ.get('LOG_MPC', False)
+LON_MPC_STEP = 0.2  # first step is 0.2s
 
 
 class LongitudinalMpc():
@@ -18,7 +19,6 @@ class LongitudinalMpc():
     self.setup_mpc()
     self.v_mpc = 0.0
     self.v_mpc_future = 0.0
-    self.a_mpc = 0.0
     self.v_cruise = 0.0
     self.prev_lead_status = False
     self.prev_lead_x = 0.0
@@ -77,7 +77,12 @@ class LongitudinalMpc():
       self.a_lead_tau = lead.aLeadTau
       self.new_lead = False
       if not self.prev_lead_status or abs(x_lead - self.prev_lead_x) > 2.5:
-        self.libmpc.init_with_simulation(self.v_mpc, x_lead, v_lead, a_lead, self.a_lead_tau)
+        des_ts = 0.15  # this init function was given the vel at 0.15 in future from prev solution
+        # (0.2 sec timestep - 0.05 sec iteration)
+        one_step = self.mpc_solution[0].v_ego[1]
+        cur_sol = self.mpc_solution[0].v_ego[0]
+        v_mpc = des_ts * (one_step - cur_sol) / LON_MPC_STEP + cur_sol
+        self.libmpc.init_with_simulation(v_mpc, x_lead, v_lead, a_lead, self.a_lead_tau)
         self.new_lead = True
 
       self.prev_lead_status = True
@@ -98,9 +103,8 @@ class LongitudinalMpc():
     self.duration = int((sec_since_boot() - t) * 1e9)
 
     # Get solution. MPC timestep is 0.2 s, so interpolation to 0.05 s is needed
-    self.v_mpc = self.mpc_solution[0].v_ego[1]
-    self.a_mpc = self.mpc_solution[0].a_ego[1]
     self.v_mpc_future = self.mpc_solution[0].v_ego[10]
+    self.v_mpc = self.mpc_solution[0].v_ego[1]
 
     # Reset if NaN or goes through lead car
     crashing = any(lead - ego < -50 for (lead, ego) in zip(self.mpc_solution[0].x_l, self.mpc_solution[0].x_ego))
@@ -117,6 +121,5 @@ class LongitudinalMpc():
                        MPC_COST_LONG.ACCELERATION, MPC_COST_LONG.JERK)
       self.cur_state[0].v_ego = v_ego
       self.cur_state[0].a_ego = 0.0
-      self.v_mpc = v_ego
-      self.a_mpc = CS.aEgo
+      # self.v_mpc = v_ego
       self.prev_lead_status = False

@@ -11,10 +11,9 @@ from selfdrive.config import Conversions as CV
 from selfdrive.controls.lib.speed_smoother import speed_smoother
 from selfdrive.controls.lib.longcontrol import LongCtrlState
 from selfdrive.controls.lib.fcw import FCWChecker
-from selfdrive.controls.lib.long_mpc import LongitudinalMpc
+from selfdrive.controls.lib.long_mpc import LongitudinalMpc, LON_MPC_STEP
 from selfdrive.controls.lib.drive_helpers import V_CRUISE_MAX
 
-LON_MPC_STEP = 0.2  # first step is 0.2s
 AWARENESS_DECEL = -0.2     # car smoothly decel at .2m/s^2 when user is distracted
 
 # lookup tables VS speed to determine min and max accels in cruise
@@ -87,20 +86,20 @@ class Planner():
     if enabled:
       solutions = {'cruise': self.v_cruise}
       if self.mpc1.prev_lead_status:
-        solutions['mpc1'] = self.mpc1.v_mpc
+        solutions['mpc1'] = self.mpc1.mpc_solution[0].v_ego[1]
       if self.mpc2.prev_lead_status:
-        solutions['mpc2'] = self.mpc2.v_mpc
+        solutions['mpc2'] = self.mpc2.mpc_solution[0].v_ego[1]
 
       slowest = min(solutions, key=solutions.get)
 
       self.longitudinalPlanSource = slowest
       # Choose lowest of MPC and cruise
       if slowest == 'mpc1':
-        self.v_acc = self.mpc1.v_mpc
-        self.a_acc = self.mpc1.a_mpc
+        self.v_acc = self.mpc1.mpc_solution[0].v_ego[1]
+        self.a_acc = self.mpc1.mpc_solution[0].a_ego[1]
       elif slowest == 'mpc2':
-        self.v_acc = self.mpc2.v_mpc
-        self.a_acc = self.mpc2.a_mpc
+        self.v_acc = self.mpc2.mpc_solution[0].v_ego[1]
+        self.a_acc = self.mpc2.mpc_solution[0].a_ego[1]
       elif slowest == 'cruise':
         self.v_acc = self.v_cruise
         self.a_acc = self.a_cruise
