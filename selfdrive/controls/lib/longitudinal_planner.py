@@ -11,10 +11,9 @@ from selfdrive.config import Conversions as CV
 from selfdrive.controls.lib.speed_smoother import speed_smoother
 from selfdrive.controls.lib.longcontrol import LongCtrlState
 from selfdrive.controls.lib.fcw import FCWChecker
-from selfdrive.controls.lib.long_mpc import LongitudinalMpc
+from selfdrive.controls.lib.long_mpc import LongitudinalMpc, LON_MPC_STEP
 from selfdrive.controls.lib.drive_helpers import V_CRUISE_MAX
 
-LON_MPC_STEP = 0.2  # first step is 0.2s
 AWARENESS_DECEL = -0.2     # car smoothly decel at .2m/s^2 when user is distracted
 
 # lookup tables VS speed to determine min and max accels in cruise
@@ -65,8 +64,6 @@ class Planner():
 
     self.v_acc_start = 0.0
     self.a_acc_start = 0.0
-    self.v_acc_next = 0.0
-    self.a_acc_next = 0.0
 
     self.v_acc = 0.0
     self.v_acc_future = 0.0
@@ -87,23 +84,30 @@ class Planner():
     if enabled:
       solutions = {'cruise': self.v_cruise}
       if self.mpc1.prev_lead_status:
-        solutions['mpc1'] = self.mpc1.v_mpc
+        solutions['mpc1'] = self.mpc1.mpc_solution[0].v_ego[1]
       if self.mpc2.prev_lead_status:
-        solutions['mpc2'] = self.mpc2.v_mpc
+        solutions['mpc2'] = self.mpc2.mpc_solution[0].v_ego[1]
 
       slowest = min(solutions, key=solutions.get)
 
       self.longitudinalPlanSource = slowest
       # Choose lowest of MPC and cruise
+      mpc = None
       if slowest == 'mpc1':
-        self.v_acc = self.mpc1.v_mpc
-        self.a_acc = self.mpc1.a_mpc
+        mpc = self.mpc1
       elif slowest == 'mpc2':
-        self.v_acc = self.mpc2.v_mpc
-        self.a_acc = self.mpc2.a_mpc
+        mpc = self.mpc2
       elif slowest == 'cruise':
+        self.v_acc_start, self.a_acc_start = self.v_acc, self.a_acc
         self.v_acc = self.v_cruise
         self.a_acc = self.a_cruise
+
+      if slowest != 'cruise' and mpc is not None:
+        self.v_acc_start = self.mpc1.mpc_solution[0].v_ego[0]
+        self.a_acc_start = self.mpc1.mpc_solution[0].a_ego[0]
+
+        self.v_acc = interp(0.05, [0, LON_MPC_STEP], mpc.mpc_solution[0].v_ego[0:2])
+        self.a_acc = interp(0.05, [0, LON_MPC_STEP], mpc.mpc_solution[0].a_ego[0:2])
 
     self.v_acc_future = min([self.mpc1.v_mpc_future, self.mpc2.v_mpc_future, v_cruise_setpoint])
 
@@ -124,9 +128,6 @@ class Planner():
 
     enabled = (long_control_state == LongCtrlState.pid) or (long_control_state == LongCtrlState.stopping)
     following = lead_1.status and lead_1.dRel < 45.0 and lead_1.vLeadK > v_ego and lead_1.aLeadK > 0.0
-
-    self.v_acc_start = self.v_acc_next
-    self.a_acc_start = self.a_acc_next
 
     # Calculate speed for normal cruise control
     if enabled and not self.first_loop and not sm['carState'].gasPressed:
@@ -180,12 +181,6 @@ class Planner():
                                        lead_1.fcw, blinkers) and not sm['carState'].brakePressed
     if self.fcw:
       cloudlog.info("FCW triggered %s", self.fcw_checker.counters)
-
-    # Interpolate 0.05 seconds and save as starting point for next iteration
-    a_acc_sol = self.a_acc_start + (CP.radarTimeStep / LON_MPC_STEP) * (self.a_acc - self.a_acc_start)
-    v_acc_sol = self.v_acc_start + CP.radarTimeStep * (a_acc_sol + self.a_acc_start) / 2.0
-    self.v_acc_next = v_acc_sol
-    self.a_acc_next = a_acc_sol
 
     self.first_loop = False
 

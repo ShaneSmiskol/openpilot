@@ -67,10 +67,10 @@ def run_following_distance_simulation(v_lead, t_end=200.0):
     mpc.publish(pm)
 
     # Choose slowest of two solutions
-    if v_cruise < mpc.v_mpc:
+    if v_cruise < mpc.mpc_solution[0].v_ego[1]:
       v_ego, a_ego = v_cruise, a_cruise
     else:
-      v_ego, a_ego = mpc.v_mpc, mpc.a_mpc
+      v_ego, a_ego = mpc.mpc_solution[0].v_ego[1], mpc.mpc_solution[0].a_ego[1]
 
     # Update state
     x_lead += v_lead * dt
@@ -88,5 +88,9 @@ class TestFollowingDistance(unittest.TestCase):
 
       simulation_steady_state = run_following_distance_simulation(v_lead)
       correct_steady_state = RW(v_lead, v_lead) + 4.0
+      print(f'v_lead: {v_lead}, sim: {simulation_steady_state}, correct: {correct_steady_state}')
 
       self.assertAlmostEqual(simulation_steady_state, correct_steady_state, delta=0.1)
+
+
+TestFollowingDistance().test_following_distanc()
