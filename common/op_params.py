@@ -123,6 +123,11 @@ class opParams:
                                                                    'If you use a float/int, openpilot will use that steer ratio instead', live=True),
                         # 'lane_speed_alerts': Param('silent', str, 'Can be: (\'off\', \'silent\', \'audible\')\n'
                         #                                           'Whether you want openpilot to alert you of faster-traveling adjacent lanes'),
+                        'future_start_step': Param(1, int, 'Index to get solution from MPC. Increments are 0.2 seconds, 1 is default (interpped to 0.05s)\n'
+                                                           '2 is 0.4 seconds, interpolated to 0.25 seconds\n'
+                                                           '3 is 0.6 seconds, interpolated to 0.45 seconds\n'
+                                                           '4 is 0.8 seconds, interpolated to 0.65 seconds\n'
+                                                           '5 is 1.0 seconds, interpolated to 0.85 seconds', live=True),
                         'upload_on_hotspot': Param(False, bool, 'If False, openpilot will not upload driving data while connected to your phone\'s hotspot'),
                         'enable_long_derivative': Param(False, bool, 'If you have longitudinal overshooting, enable this! This enables derivative-based\n'
                                                                      'integral wind-down to help reduce overshooting within the long PID loop'),

@@ -455,7 +455,7 @@ class Controls:
     dt = min(long_plan_age, LON_MPC_STEP + DT_CTRL) + DT_CTRL
 
     a_acc_sol = long_plan.aStart + (dt / LON_MPC_STEP) * (long_plan.aTarget - long_plan.aStart)
-    v_acc_sol = long_plan.vStart + dt * (a_acc_sol + long_plan.aStart) / 2.0
+    v_acc_sol = long_plan.vStart + dt * (a_acc_sol + long_plan.aStart) / 2.0  # todo: use vTarget to interpolate instead a solution
 
     extras_loc = {'lead_one': self.sm_smiskol['radarState'].leadOne, 'mpc_TR': self.sm_smiskol['dynamicFollowData'].mpcTR,
                   'live_tracks': self.sm_smiskol['liveTracks'], 'has_lead': long_plan.hasLead}

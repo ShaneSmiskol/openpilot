@@ -11,12 +11,11 @@ from selfdrive.config import Conversions as CV
 from selfdrive.controls.lib.speed_smoother import speed_smoother
 from selfdrive.controls.lib.longcontrol import LongCtrlState
 from selfdrive.controls.lib.fcw import FCWChecker
-from selfdrive.controls.lib.long_mpc import LongitudinalMpc
+from selfdrive.controls.lib.long_mpc import LongitudinalMpc, LON_MPC_STEP
 from selfdrive.controls.lib.drive_helpers import V_CRUISE_MAX
 from selfdrive.controls.lib.long_mpc_model import LongitudinalMpcModel
 from common.op_params import opParams
 
-LON_MPC_STEP = 0.2  # first step is 0.2s
 AWARENESS_DECEL = -0.2     # car smoothly decel at .2m/s^2 when user is distracted
 
 # lookup tables VS speed to determine min and max accels in cruise
@@ -105,8 +104,10 @@ class Planner():
     self.v_acc = 0.0
     self.v_acc_future = 0.0
     self.a_acc = 0.0
+    self.a_acc_future = 0.0, 0.0  # index 0 is timestep - 1, index 1 is timestep
     self.v_cruise = 0.0
     self.a_cruise = 0.0
+    self.a_cruise_future = 0.0
 
     self.longitudinalPlanSource = 'cruise'
     self.fcw_checker = FCWChecker()
@@ -116,40 +117,47 @@ class Planner():
 
     self.params = Params()
     self.first_loop = True
+    self.future_start_step = 1
 
   def choose_solution(self, v_cruise_setpoint, enabled, model_enabled):
-    possible_futures = [self.mpc1.v_mpc_future, self.mpc2.v_mpc_future, v_cruise_setpoint]
+    possible_futures = [self.mpc1.mpc_solution[0].v_ego[10], self.mpc2.mpc_solution[0].v_ego[10], v_cruise_setpoint]
     if enabled:
       solutions = {'cruise': self.v_cruise}
       if self.mpc1.prev_lead_status:
-        solutions['mpc1'] = self.mpc1.v_mpc
+        solutions['mpc1'] = self.mpc1.mpc_solution[0].v_ego[1]
       if self.mpc2.prev_lead_status:
-        solutions['mpc2'] = self.mpc2.v_mpc
+        solutions['mpc2'] = self.mpc2.mpc_solution[0].v_ego[1]
       if self.mpc_model.valid and model_enabled:
-        solutions['model'] = self.mpc_model.v_mpc
-        possible_futures.append(self.mpc_model.v_mpc_future)  # only used when using model
+        solutions['model'] = self.mpc_model.mpc_solution[0].v_ego[1]
+        possible_futures.append(self.mpc_model.mpc_solution[0].v_ego[10])  # only used when using model
 
       slowest = min(solutions, key=solutions.get)
 
       self.longitudinalPlanSource = slowest
       # Choose lowest of MPC and cruise
       if slowest == 'mpc1':
-        self.v_acc = self.mpc1.v_mpc
-        self.a_acc = self.mpc1.a_mpc
+        self.v_acc = self.mpc1.mpc_solution[0].v_ego[1]
+        self.a_acc = self.mpc1.mpc_solution[0].a_ego[1]
+        self.a_acc_future = self.mpc1.mpc_solution[0].a_ego[self.future_start_step - 1:self.future_start_step + 1]
       elif slowest == 'mpc2':
-        self.v_acc = self.mpc2.v_mpc
-        self.a_acc = self.mpc2.a_mpc
+        self.v_acc = self.mpc2.mpc_solution[0].v_ego[1]
+        self.a_acc = self.mpc2.mpc_solution[0].a_ego[1]
+        self.a_acc_future = self.mpc2.mpc_solution[0].a_ego[self.future_start_step - 1:self.future_start_step + 1]
       elif slowest == 'cruise':
         self.v_acc = self.v_cruise
         self.a_acc = self.a_cruise
+        self.a_acc_future = self.a_cruise_future, self.a_cruise_future  # shouldn't matter too much
       elif slowest == 'model':
-        self.v_acc = self.mpc_model.v_mpc
-        self.a_acc = self.mpc_model.a_mpc
+        self.v_acc = self.mpc_model.mpc_solution[0].v_ego[1]
+        self.a_acc = self.mpc_model.mpc_solution[0].a_ego[1]
+        self.a_acc_future = self.mpc_model.mpc_solution[0].a_ego[self.future_start_step - 1:self.future_start_step + 1]
     # print('{} mph, {} mph/s'.format(round(self.mpc_model.v_mpc * 2.23694, 2), round(self.mpc_model.a_mpc * 2.23694, 2)))
 
     self.v_acc_future = min(possible_futures)
 
   def update(self, sm, CP, VM, PP):
+    self.future_start_step = int(self.op_params.get('future_start_step'))
+
     """Gets called when new radarState is available"""
     cur_time = sec_since_boot()
     v_ego = sm['carState'].vEgo
@@ -187,6 +195,12 @@ class Planner():
                                                     jerk_limits[1], jerk_limits[0],
                                                     LON_MPC_STEP)
 
+      _, self.a_cruise_future = speed_smoother(self.v_acc_start, self.a_acc_start,
+                                               v_cruise_setpoint,
+                                               accel_limits_turns[1], accel_limits_turns[0],
+                                               jerk_limits[1], jerk_limits[0],
+                                               self.future_start_step)
+
       # cruise speed can't be negative even is user is distracted
       self.v_cruise = max(self.v_cruise, 0.)
     else:
@@ -200,6 +214,7 @@ class Planner():
       self.a_acc_start = reset_accel
       self.v_cruise = reset_speed
       self.a_cruise = reset_accel
+      self.a_cruise_future = reset_accel
 
     self.mpc1.set_cur_state(self.v_acc_start, self.a_acc_start)
     self.mpc2.set_cur_state(self.v_acc_start, self.a_acc_start)
@@ -250,12 +265,20 @@ class Planner():
     longitudinalPlan.mdMonoTime = sm.logMonoTime['modelV2']
     longitudinalPlan.radarStateMonoTime = sm.logMonoTime['radarState']
 
+    # Calculate these separately since changing a_mpc will change the velocity solution as well which we don't want
+    # So velocity solution should still be 0.05 seconds, but send aTarget as the future_index * 0.2 seconds
+    #                                                    and aStart as future_index * 0.2 seconds - 0.05 seconds
+
+    # below isn't really 0 to 0.2 seconds, but all we care about is the ratio
+    a_acc = interp(0.05, [0.0, 0.2], self.a_acc_future)  # this is 0.05 seconds ahead of aStart (if index 2: 0.4 + 0.05 seconds)
+    a_acc_start = self.a_acc_future[0]  # start needs to be at start (if index 2: 0.4 seconds)
+
     longitudinalPlan.vCruise = float(self.v_cruise)
     longitudinalPlan.aCruise = float(self.a_cruise)
     longitudinalPlan.vStart = float(self.v_acc_start)
-    longitudinalPlan.aStart = float(self.a_acc_start)
+    longitudinalPlan.aStart = float(a_acc_start)  # this needs to be current (0.4 sec if idx 2)
     longitudinalPlan.vTarget = float(self.v_acc)
-    longitudinalPlan.aTarget = float(self.a_acc)
+    longitudinalPlan.aTarget = float(a_acc)  # this needs to be 0.05 seconds ahead of aStart (0.45 sec if idx 2)
     longitudinalPlan.vTargetFuture = float(self.v_acc_future)
     longitudinalPlan.hasLead = self.mpc1.prev_lead_status
     longitudinalPlan.longitudinalPlanSource = self.longitudinalPlanSource
