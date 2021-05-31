@@ -99,6 +99,18 @@ class opParams:
 
     self.fork_params = {'camera_offset': Param(0.06, NUMBER, 'Your camera offset to use in lane_planner.py', live=True),
                         'dynamic_follow': Param('auto', str, static=True, hidden=True),
+
+                        'torque_unification': Param(False, bool, 'Experimental feature designed to normalize the torque response across speeds and cars\n'
+                                                                 'Currently it\'s only been tuned for the TSS1 Corolla, other cars MAY NOT PLAY NICELY (but most Toyotas should)\n'
+                                                                 'Disable if steering becomes weird. Only works for PID vehicles currently'),
+                        'lat_p_multiplier': Param(0.4, NUMBER, 'A multiplier value for proportional, this has been tuned for torque unification\n'
+                                                               'Revert to 1 if you disable torque unification', live=True),
+                        'lat_i_multiplier': Param(0.6, NUMBER, 'A multiplier value for integral, this has been tuned for torque unification\n'
+                                                               'Revert to 1 if you disable torque unification', live=True),
+                        # 'lat_f_multiplier': Param(1.944, NUMBER, 'A multiplier value for feedforward, this has been tuned for torque unification\n'
+                        #                                          'This value should be between 1.5 and 2.5. Some known good values:\n'
+                        #                                          'For Corolla: 2.3, TSS2 Corolla: 1.96, Impreza: 1.57\n'
+                        #                                          'Revert to 1 if you disable torque unification', live=True),
                         'long_accel_delay': Param(0.4, NUMBER, 'The delay in seconds from requesting acceleration to seeing it\n'
                                                                'Raise if braking late, lower if braking early. Stock openpilot uses 0.0', live=True),
                         'global_df_mod': Param(1.0, NUMBER, 'The multiplier for the current distance used by dynamic follow. The range is limited from 0.85 to 2.5\n'

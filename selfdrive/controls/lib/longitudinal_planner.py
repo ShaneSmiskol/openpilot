@@ -126,7 +126,7 @@ class Planner():
     self.params = Params()
     self.first_loop = True
 
-  def choose_solution(self, v_cruise_setpoint, enabled, model_enabled):
+  def choose_solution(self, v_cruise_setpoint, enabled, model_enabled, speed):
     possible_futures = [self.mpc1.v_mpc_future, self.mpc2.v_mpc_future, v_cruise_setpoint]
     if enabled:
       solutions = {'cruise': self.v_cruise}
@@ -142,7 +142,8 @@ class Planner():
 
       self.longitudinalPlanSource = slowest
 
-      accel_delay = min(self.op_params.get('long_accel_delay'), 1.8)  # precaution if user tries a high value, cur and fut would be equal otherwise
+      # accel_delay = min(self.op_params.get('long_accel_delay'), 1.8)  # precaution if user tries a high value, cur and fut would be equal otherwise
+      accel_delay = interp(speed * CV.MS_TO_MPH, [10, 80], [0.2, 0.4])
 
       # Some notes: a_acc_start should always be current timestep (or delayed)
       # a_acc should be a_acc_start but +0.2 seconds so controlsd interps properly (a_acc_start to a_acc_start+0.05sec)
@@ -236,7 +237,7 @@ class Planner():
                           speeds,
                           accelerations)
 
-    self.choose_solution(v_cruise_setpoint, enabled, sm['modelLongButton'].enabled)
+    self.choose_solution(v_cruise_setpoint, enabled, sm['modelLongButton'].enabled, v_ego)
 
     # determine fcw
     if self.mpc1.new_lead:

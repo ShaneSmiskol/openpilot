@@ -19,6 +19,7 @@ class LatPIDController():
     self._k_i = k_i  # integral gain
     self._k_d = k_d  # derivative gain
     self.k_f = k_f  # feedforward gain
+    self.op_params = opParams()
 
     self.pos_limit = pos_limit
     self.neg_limit = neg_limit
@@ -33,11 +34,13 @@ class LatPIDController():
 
   @property
   def k_p(self):
-    return interp(self.speed, self._k_p[0], self._k_p[1])
+    mult = self.op_params.get('lat_p_multiplier') if self.use_torque_unification else 1
+    return interp(self.speed, self._k_p[0], self._k_p[1]) * mult
 
   @property
   def k_i(self):
-    return interp(self.speed, self._k_i[0], self._k_i[1])
+    mult = self.op_params.get('lat_i_multiplier') if self.use_torque_unification else 1
+    return interp(self.speed, self._k_i[0], self._k_i[1]) * mult
 
   @property
   def k_d(self):
@@ -56,6 +59,7 @@ class LatPIDController():
     return self.sat_count > self.sat_limit
 
   def reset(self):
+    self.use_torque_unification = self.op_params.get('torque_unification')
     self.p = 0.0
     self.i = 0.0
     self.f = 0.0
@@ -66,10 +70,12 @@ class LatPIDController():
 
   def update(self, setpoint, measurement, speed=0.0, check_saturation=True, override=False, feedforward=0., deadzone=0., freeze_integrator=False):
     self.speed = speed
+    self.use_torque_unification = self.op_params.get('torque_unification')
 
     error = float(apply_deadzone(setpoint - measurement, deadzone))
     self.p = error * self.k_p
-    self.f = feedforward * self.k_f
+    mult = 1  # self.op_params.get('lat_f_multiplier') if self.use_torque_unification else 1
+    self.f = feedforward * self.k_f * mult
 
     d = 0
     if len(self.errors) >= 5:  # makes sure list is long enough
@@ -82,7 +88,7 @@ class LatPIDController():
       i = self.i + error * self.k_i * self.i_rate
       control = self.p + self.f + i + d
 
-      if self.convert is not None:
+      if self.convert is not None and self.use_torque_unification:
         control = self.convert(control, speed=self.speed)
 
       # Update when changing i will move the control away from the limits
@@ -93,7 +99,7 @@ class LatPIDController():
         self.i = i
 
     control = self.p + self.f + self.i + d
-    if self.convert is not None:
+    if self.convert is not None and self.use_torque_unification:
       control = self.convert(control, speed=self.speed)
 
     self.saturated = self._check_saturation(control, check_saturation, error)

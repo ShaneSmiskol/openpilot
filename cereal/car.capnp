@@ -430,7 +430,6 @@ struct CarParams {
     kdBP @4 :List(Float32) = [0.];
     kdV @5 :List(Float32) = [0.];
     kf @6 :Float32;
-    newKfTuned @7 :Bool;
   }
 
   struct LongitudinalPIDTuning {
