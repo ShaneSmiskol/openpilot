@@ -172,9 +172,21 @@ static void draw_frame(UIState *s) {
 static void ui_draw_vision_lane_lines(UIState *s) {
   const UIScene &scene = s->scene;
   // paint lanelines
-  for (int i = 0; i < std::size(scene.lane_line_vertices); i++) {
-    NVGcolor color = nvgRGBAf(1.0, 1.0, 1.0, scene.lane_line_probs[i]);
-    ui_draw_line(s, scene.lane_line_vertices[i], &color, nullptr);
+  if (!scene.end_to_end) {
+    for (int i = 0; i < std::size(scene.lane_line_vertices); i++) {
+      NVGcolor color;
+      if (i == 1 || i == 2) {
+        const cereal::ModelDataV2::XYZTData::Reader &line = scene.model.getLaneLines()[i];
+        const float default_pos = 1.4;  // when lane poly isn't available
+        const float lane_pos = line.getY().size() > 0 ? std::abs(line.getY()[5]) : default_pos;  // get redder when line is closer to car
+        float hue = 332.5 * lane_pos - 332.5;  // equivalent to {1.4, 1.0}: {133, 0} (green to red)
+        hue = fmin(133, fmax(0, hue)) / 360.;  // clip and normalize
+        color = nvgHSLA(hue, 0.73, 0.64, scene.lane_line_probs[i] * 255);
+      } else {
+        color = nvgRGBAf(1.0, 1.0, 1.0, scene.lane_line_probs[i]);
+      }
+      ui_draw_line(s, scene.lane_line_vertices[i], &color, nullptr);
+    }
   }
 
   // paint road edges
@@ -184,8 +196,18 @@ static void ui_draw_vision_lane_lines(UIState *s) {
   }
 
   // paint path
-  NVGpaint track_bg = nvgLinearGradient(s->vg, s->fb_w, s->fb_h, s->fb_w, s->fb_h * .4,
-                                        COLOR_WHITE, COLOR_WHITE_ALPHA(0));
+  const bool enabled = scene.controls_state.getEnabled();
+  const cereal::ModelDataV2::XYZTData::Reader &pos = scene.model.getPosition();
+  const float lat_pos = pos.getY().size() > 0 ? std::abs(pos.getY()[16] - pos.getY()[0]) : 0;  // 14 is 1.91406 (subtract initial pos to not consider offset)
+  const float hue = lat_pos * -39.46 + 148;  // interp from {0, 4.5} -> {148, 0}
+  NVGpaint track_bg;
+  if (enabled) {
+    track_bg = nvgLinearGradient(s->vg, s->fb_w, s->fb_h, s->fb_w, s->fb_h*.4,
+                                 nvgHSLA(hue / 360., .94, .51, 255), nvgHSLA(hue / 360., .73, .49, 100));
+  } else {
+    track_bg = nvgLinearGradient(s->vg, s->fb_w, s->fb_h, s->fb_w, s->fb_h * .4,
+                                 COLOR_WHITE, COLOR_WHITE_ALPHA(0));
+  }
   ui_draw_line(s, scene.track_vertices, nullptr, &track_bg);
 }
 
@@ -234,7 +256,8 @@ static void ui_draw_vision_speed(UIState *s) {
   const float speed = std::max(0.0, s->scene.car_state.getVEgo() * (s->is_metric ? 3.6 : 2.2369363));
   const std::string speed_str = std::to_string((int)std::nearbyint(speed));
   nvgTextAlign(s->vg, NVG_ALIGN_CENTER | NVG_ALIGN_BASELINE);
-  ui_draw_text(s, s->viz_rect.centerX(), 240, speed_str.c_str(), 96 * 2.5, COLOR_WHITE, "sans-bold");
+  NVGcolor color = s->scene.car_state.getBrakeLights() ? nvgRGBA(255, 66, 66, 255) : COLOR_WHITE;
+  ui_draw_text(s, s->viz_rect.centerX(), 240, speed_str.c_str(), 96 * 2.5, color, "sans-bold");
   ui_draw_text(s, s->viz_rect.centerX(), 320, s->is_metric ? "km/h" : "mph", 36 * 2.5, COLOR_WHITE_ALPHA(200), "sans-regular");
 }
 
@@ -300,6 +323,83 @@ static void ui_draw_driver_view(UIState *s) {
   ui_draw_circle_image(s, icon_x, icon_y, face_size, "driver_face", face_detected);
 }
 
+static void ui_draw_ls_button(UIState *s) {
+  int btn_status = s->scene.lsButtonStatus;
+  int btn_w = 150;
+  int btn_h = 150;
+  int x_padding = 200;
+  int y_padding = 50;
+  int btn_x = 1920 - btn_w - x_padding;
+  int btn_y = 1080 - btn_h - y_padding;
+  int btn_colors[3][3] = {{255, 55, 55}, {55, 184, 104}, {4, 67, 137}};
+
+  nvgBeginPath(s->vg);
+  nvgRoundedRect(s->vg, btn_x-110, btn_y-45, btn_w, btn_h, 100);
+  nvgStrokeColor(s->vg, nvgRGBA(btn_colors[btn_status][0], btn_colors[btn_status][1], btn_colors[btn_status][2], 255));
+  nvgStrokeWidth(s->vg, 11);
+  nvgStroke(s->vg);
+
+  nvgFillColor(s->vg, nvgRGBA(255, 255, 255, 255));
+  nvgFontSize(s->vg, 80);
+  nvgText(s->vg, btn_x - 38, btn_y + 30, "LS", NULL);
+
+  nvgFillColor(s->vg, nvgRGBA(255, 255, 255, 255));
+  nvgFontSize(s->vg, 45);
+  nvgText(s->vg, btn_x - 34, btn_y + 50 + 15, "mode", NULL);
+}
+
+static void ui_draw_df_button(UIState *s) {
+  int btn_status = s->scene.dfButtonStatus;
+  int btn_w = 150;
+  int btn_h = 150;
+  int y_padding = 50;
+  int btn_x = 1920 - btn_w;
+  int btn_y = 1080 - btn_h - y_padding;
+  int btn_colors[4][3] = {{4, 67, 137}, {36, 168, 188}, {252, 255, 75}, {55, 184, 104}};
+
+  nvgBeginPath(s->vg);
+  nvgRoundedRect(s->vg, btn_x-110, btn_y-45, btn_w, btn_h, 100);
+  nvgStrokeColor(s->vg, nvgRGBA(btn_colors[btn_status][0], btn_colors[btn_status][1], btn_colors[btn_status][2], 255));
+  nvgStrokeWidth(s->vg, 11);
+  nvgStroke(s->vg);
+
+  nvgFillColor(s->vg, nvgRGBA(255, 255, 255, 255));
+  nvgFontSize(s->vg, 80);
+  nvgText(s->vg, btn_x - 38, btn_y + 30, "DF", NULL);
+
+  nvgFillColor(s->vg, nvgRGBA(255, 255, 255, 255));
+  nvgFontSize(s->vg, 45);
+  nvgText(s->vg, btn_x - 34, btn_y + 50 + 15, "profile", NULL);
+}
+
+static void ui_draw_ml_button(UIState *s) {
+  int btn_w = 475;
+  int btn_h = 130;
+  int x = 1920 / 2;
+  int y = 940;
+  int btn_x = x - btn_w / 2;
+  int btn_y = y - btn_h / 2;
+
+  nvgBeginPath(s->vg);
+  nvgRoundedRect(s->vg, btn_x, btn_y, btn_w, btn_h, 25);
+  if (s->scene.mlButtonEnabled) {  // change outline color based on status of button
+    nvgStrokeColor(s->vg, nvgRGBA(55, 184, 104, 255));
+  } else {
+    nvgStrokeColor(s->vg, nvgRGBA(184, 55, 55, 255));
+  }
+  nvgStrokeWidth(s->vg, 12);
+  nvgStroke(s->vg);
+
+  nvgBeginPath(s->vg);  // dark background for readability
+  nvgRoundedRect(s->vg, btn_x, btn_y, btn_w, btn_h, 25);
+  nvgFillColor(s->vg, nvgRGBA(75, 75, 75, 75));
+  nvgFill(s->vg);
+
+  nvgFillColor(s->vg, nvgRGBA(255, 255, 255, 255));
+  nvgFontSize(s->vg, 60);
+  nvgText(s->vg, x, y + btn_h / 8, "Toggle Model Long", NULL);
+}
+
 static void ui_draw_vision_header(UIState *s) {
   NVGpaint gradient = nvgLinearGradient(s->vg, s->viz_rect.x,
                         s->viz_rect.y+(header_h-(header_h/2.5)),
@@ -311,6 +411,10 @@ static void ui_draw_vision_header(UIState *s) {
   ui_draw_vision_maxspeed(s);
   ui_draw_vision_speed(s);
   ui_draw_vision_event(s);
+
+  ui_draw_df_button(s);
+//  ui_draw_ls_button(s);
+  ui_draw_ml_button(s);
 }
 
 static void ui_draw_vision_footer(UIState *s) {

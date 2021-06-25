@@ -1,17 +1,18 @@
-from common.numpy_fast import interp
+from common.numpy_fast import interp, clip
 import numpy as np
 from selfdrive.hardware import EON, TICI
 from cereal import log
-
+from common.op_params import opParams
 
 TRAJECTORY_SIZE = 33
 # camera offset is meters from center car to camera
-if EON:
-  CAMERA_OFFSET = 0.06
-elif TICI:
-  CAMERA_OFFSET = -0.04
-else:
-  CAMERA_OFFSET = 0.0
+STANDARD_CAMERA_OFFSET = 0.06  # do NOT change this. edit with opEdit
+# if EON:
+#   CAMERA_OFFSET = 0.06
+# elif TICI:
+#   CAMERA_OFFSET = -0.04
+# else:
+#   CAMERA_OFFSET = 0.0
 
 
 
@@ -24,6 +25,8 @@ class LanePlanner:
     self.lane_width_estimate = 3.7
     self.lane_width_certainty = 1.0
     self.lane_width = 3.7
+    self.op_params = opParams()
+    self.camera_offset = self.op_params.get('camera_offset')
 
     self.lll_prob = 0.
     self.rll_prob = 0.
@@ -42,8 +45,10 @@ class LanePlanner:
       # left and right ll x is the same
       self.ll_x = md.laneLines[1].x
       # only offset left and right lane lines; offsetting path does not make sense
-      self.lll_y = np.array(md.laneLines[1].y) - CAMERA_OFFSET
-      self.rll_y = np.array(md.laneLines[2].y) - CAMERA_OFFSET
+      self.camera_offset = self.op_params.get('camera_offset')  # update camera offset
+      self.camera_offset = clip(self.camera_offset, -0.3, 0.3)
+      self.lll_y = np.array(md.laneLines[1].y) - self.camera_offset
+      self.rll_y = np.array(md.laneLines[2].y) - self.camera_offset
       self.lll_prob = md.laneLineProbs[1]
       self.rll_prob = md.laneLineProbs[2]
       self.lll_std = md.laneLineStds[1]
@@ -56,6 +61,7 @@ class LanePlanner:
   def get_d_path(self, v_ego, path_t, path_xyz):
     # Reduce reliance on lanelines that are too far apart or
     # will be in a few seconds
+    path_xyz[:, 1] -= self.camera_offset - STANDARD_CAMERA_OFFSET  # offset path
     l_prob, r_prob = self.lll_prob, self.rll_prob
     width_pts = self.rll_y - self.lll_y
     prob_mods = []

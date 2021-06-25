@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 import os
+import requests
+import threading
+from selfdrive.crash import client
 from cereal import car, log
 from common.numpy_fast import clip
 from common.realtime import sec_since_boot, config_realtime_process, Priority, Ratekeeper, DT_CTRL
@@ -10,7 +13,6 @@ from selfdrive.config import Conversions as CV
 from selfdrive.swaglog import cloudlog
 from selfdrive.boardd.boardd import can_list_to_can_capnp
 from selfdrive.car.car_helpers import get_car, get_startup_event, get_one_can
-from selfdrive.controls.lib.lane_planner import CAMERA_OFFSET
 from selfdrive.controls.lib.drive_helpers import update_v_cruise, initialize_v_cruise
 from selfdrive.controls.lib.longcontrol import LongControl, STARTING_TARGET_SPEED
 from selfdrive.controls.lib.latcontrol_pid import LatControlPID
@@ -22,6 +24,8 @@ from selfdrive.controls.lib.vehicle_model import VehicleModel
 from selfdrive.controls.lib.longitudinal_planner import LON_MPC_STEP
 from selfdrive.locationd.calibrationd import Calibration
 from selfdrive.hardware import HARDWARE, TICI
+from selfdrive.controls.lib.dynamic_follow.df_manager import dfManager
+from common.op_params import opParams
 
 LDW_MIN_SPEED = 31 * CV.MPH_TO_MS
 LANE_DEPARTURE_THRESHOLD = 0.1
@@ -42,9 +46,19 @@ LaneChangeDirection = log.LateralPlan.LaneChangeDirection
 EventName = car.CarEvent.EventName
 
 
+def log_fingerprint(candidate, timeout=15):
+  try:
+    requests.get('https://sentry.io', timeout=timeout)
+    client.captureMessage("fingerprinted {}".format(candidate), level='info')
+    return
+  except:
+    pass
+
+
 class Controls:
   def __init__(self, sm=None, pm=None, can_sock=None):
     config_realtime_process(3, Priority.CTRL_HIGH)
+    self.op_params = opParams()
 
     # Setup sockets
     self.pm = pm
@@ -54,10 +68,18 @@ class Controls:
 
     self.sm = sm
     if self.sm is None:
-      ignore = ['ubloxRaw', 'driverCameraState', 'managerState'] if SIMULATION else None
-      self.sm = messaging.SubMaster(['deviceState', 'pandaState', 'modelV2', 'liveCalibration', 'ubloxRaw',
+      ignore = ['driverCameraState', 'managerState'] if SIMULATION else None
+      self.sm = messaging.SubMaster(['deviceState', 'pandaState', 'modelV2', 'liveCalibration',
                                      'driverMonitoringState', 'longitudinalPlan', 'lateralPlan', 'liveLocationKalman',
                                      'roadCameraState', 'driverCameraState', 'managerState', 'liveParameters', 'radarState'], ignore_alive=ignore)
+
+    self.sm_smiskol = messaging.SubMaster(['radarState', 'dynamicFollowData', 'liveTracks', 'dynamicFollowButton',
+                                           'laneSpeed', 'dynamicCameraOffset', 'modelLongButton'])
+
+    self.op_params = opParams()
+    self.df_manager = dfManager()
+    self.support_white_panda = self.op_params.get('support_white_panda')
+    self.last_model_long = False
 
     self.can_sock = can_sock
     if can_sock is None:
@@ -65,10 +87,13 @@ class Controls:
       self.can_sock = messaging.sub_sock('can', timeout=can_timeout)
 
     # wait for one pandaState and one CAN packet
+    panda_type = messaging.recv_one(self.sm.sock['pandaState']).pandaState.pandaType
+    has_relay = panda_type in [PandaType.blackPanda, PandaType.uno, PandaType.dos]
     print("Waiting for CAN messages...")
     get_one_can(self.can_sock)
 
-    self.CI, self.CP = get_car(self.can_sock, self.pm.sock['sendcan'])
+    self.CI, self.CP, candidate = get_car(self.can_sock, self.pm.sock['sendcan'], has_relay)
+    threading.Thread(target=log_fingerprint, args=[candidate]).start()
 
     # read params
     params = Params()
@@ -99,7 +124,7 @@ class Controls:
     self.AM = AlertManager()
     self.events = Events()
 
-    self.LoC = LongControl(self.CP, self.CI.compute_gb)
+    self.LoC = LongControl(self.CP, self.CI.compute_gb, candidate)
     self.VM = VehicleModel(self.CP)
 
     if self.CP.lateralTuning.which() == 'pid':
@@ -233,13 +258,11 @@ class Controls:
       self.events.add(EventName.fcw)
 
     # TODO: fix simulator
-    if not SIMULATION:
-      if not NOSENSOR:
-        if not self.sm.alive['ubloxRaw'] and (self.sm.frame > 10. / DT_CTRL):
-          self.events.add(EventName.gpsMalfunction)
-        elif not self.sm['liveLocationKalman'].gpsOK and (self.distance_traveled > 1000) and not TICI:
-          # Not show in first 1 km to allow for driving out of garage. This event shows after 5 minutes
-          self.events.add(EventName.noGps)
+    # if not SIMULATION:
+    #   if not NOSENSOR and not self.support_white_panda:
+    #     if not self.sm['liveLocationKalman'].gpsOK and (self.distance_traveled > 1000) and not TICI:
+    #       # Not show in first 1 km to allow for driving out of garage. This event shows after 5 minutes
+    #       self.events.add(EventName.noGps)
       if not self.sm.all_alive(['roadCameraState', 'driverCameraState']) and (self.sm.frame > 5 / DT_CTRL):
         self.events.add(EventName.cameraMalfunction)
       if self.sm['modelV2'].frameDropPerc > 20:
@@ -252,8 +275,53 @@ class Controls:
 
     # Only allow engagement with brake pressed when stopped behind another stopped car
     if CS.brakePressed and self.sm['longitudinalPlan'].vTargetFuture >= STARTING_TARGET_SPEED \
-      and self.CP.openpilotLongitudinalControl and CS.vEgo < 0.3:
+      and self.CP.openpilotLongitudinalControl and CS.vEgo < 0.3 and not self.last_model_long:
       self.events.add(EventName.noTarget)
+
+    self.add_stock_additions_alerts(CS)
+
+  def add_stock_additions_alerts(self, CS):
+    self.AM.SA_set_frame(self.sm.frame)
+    self.AM.SA_set_enabled(self.enabled)
+    # alert priority is defined by code location, keeping is highest, then lane speed alert, then auto-df alert
+    if self.sm_smiskol['modelLongButton'].enabled != self.last_model_long:
+      extra_text_1 = 'disabled!' if self.last_model_long else 'enabled!'
+      extra_text_2 = '' if self.last_model_long else ', model may behave unexpectedly'
+      self.AM.SA_add('modelLongAlert', extra_text_1=extra_text_1, extra_text_2=extra_text_2)
+      return
+
+    if self.sm_smiskol['dynamicCameraOffset'].keepingLeft:
+      self.AM.SA_add('laneSpeedKeeping', extra_text_1='LEFT', extra_text_2='Oncoming traffic in right lane')
+      return
+    elif self.sm_smiskol['dynamicCameraOffset'].keepingRight:
+      self.AM.SA_add('laneSpeedKeeping', extra_text_1='RIGHT', extra_text_2='Oncoming traffic in left lane')
+      return
+
+    ls_state = self.sm_smiskol['laneSpeed'].state
+    if ls_state != '':
+      self.AM.SA_add('lsButtonAlert', extra_text_1=ls_state)
+      return
+
+    faster_lane = self.sm_smiskol['laneSpeed'].fastestLane
+    if faster_lane in ['left', 'right']:
+      ls_alert = 'laneSpeedAlert'
+      if not self.sm_smiskol['laneSpeed'].new:
+        ls_alert += 'Silent'
+      self.AM.SA_add(ls_alert, extra_text_1='{} lane faster'.format(faster_lane).upper(), extra_text_2='Change lanes to faster {} lane'.format(faster_lane))
+      return
+
+    df_out = self.df_manager.update()
+    if df_out.changed:
+      df_alert = 'dfButtonAlert'
+      if df_out.is_auto and df_out.last_is_auto:
+        # only show auto alert if engaged, not hiding auto, and time since lane speed alert not showing
+        if CS.cruiseState.enabled and not self.op_params.get('hide_auto_df_alerts'):
+          df_alert += 'Silent'
+          self.AM.SA_add(df_alert, extra_text_1=df_out.model_profile_text + ' (auto)')
+          return
+      else:
+        self.AM.SA_add(df_alert, extra_text_1=df_out.user_profile_text, extra_text_2='Dynamic follow: {} profile active'.format(df_out.user_profile_text))
+        return
 
   def data_sample(self):
     """Receive data from sockets and update carState"""
@@ -263,6 +331,7 @@ class Controls:
     CS = self.CI.update(self.CC, can_strs)
 
     self.sm.update(0)
+    self.sm_smiskol.update(0)
 
     # Check for CAN timeout
     if not can_strs:
@@ -386,8 +455,11 @@ class Controls:
     a_acc_sol = long_plan.aStart + (dt / LON_MPC_STEP) * (long_plan.aTarget - long_plan.aStart)
     v_acc_sol = long_plan.vStart + dt * (a_acc_sol + long_plan.aStart) / 2.0
 
+    extras_loc = {'lead_one': self.sm_smiskol['radarState'].leadOne, 'mpc_TR': self.sm_smiskol['dynamicFollowData'].mpcTR,
+                  'live_tracks': self.sm_smiskol['liveTracks'], 'has_lead': long_plan.hasLead}
+
     # Gas/Brake PID loop
-    actuators.gas, actuators.brake = self.LoC.update(self.active, CS, v_acc_sol, long_plan.vTargetFuture, a_acc_sol, self.CP)
+    actuators.gas, actuators.brake = self.LoC.update(self.active, CS, v_acc_sol, long_plan.vTargetFuture, a_acc_sol, self.CP, extras_loc)
     # Steering PID loop and lateral MPC
     actuators.steer, actuators.steeringAngleDeg, lac_log = self.LaC.update(self.active, CS, self.CP, lat_plan)
 
@@ -447,8 +519,12 @@ class Controls:
     if len(meta.desirePrediction) and ldw_allowed:
       l_lane_change_prob = meta.desirePrediction[Desire.laneChangeLeft - 1]
       r_lane_change_prob = meta.desirePrediction[Desire.laneChangeRight - 1]
-      l_lane_close = left_lane_visible and (self.sm['modelV2'].laneLines[1].y[0] > -(1.08 + CAMERA_OFFSET))
-      r_lane_close = right_lane_visible and (self.sm['modelV2'].laneLines[2].y[0] < (1.08 - CAMERA_OFFSET))
+      CAMERA_OFFSET = self.sm['lateralPlan'].cameraOffset
+      ldw_average_car_width = 1.750483672001016  # from sedans, suvs, and minivans (todo: find from all openpilot Toyotas instead)
+      ldw_m_from_wheel = 0.15
+      ldw_threshold = ldw_average_car_width / 2 + ldw_m_from_wheel
+      l_lane_close = left_lane_visible and (self.sm['modelV2'].laneLines[1].y[0] > -(ldw_threshold + CAMERA_OFFSET))
+      r_lane_close = right_lane_visible and (self.sm['modelV2'].laneLines[2].y[0] < (ldw_threshold - CAMERA_OFFSET))
 
       CC.hudControl.leftLaneDepart = bool(l_lane_change_prob > LANE_DEPARTURE_THRESHOLD and l_lane_close)
       CC.hudControl.rightLaneDepart = bool(r_lane_change_prob > LANE_DEPARTURE_THRESHOLD and r_lane_close)
@@ -459,6 +535,9 @@ class Controls:
     clear_event = ET.WARNING if ET.WARNING not in self.current_alert_types else None
     alerts = self.events.create_alerts(self.current_alert_types, [self.CP, self.sm, self.is_metric])
     self.AM.add_many(self.sm.frame, alerts, self.enabled)
+
+    self.last_model_long = self.sm_smiskol['modelLongButton'].enabled
+
     self.AM.process_alerts(self.sm.frame, clear_event)
     CC.hudControl.visualAlert = self.AM.visual_alert
 
@@ -495,7 +574,7 @@ class Controls:
     controlsState.vPid = float(self.LoC.v_pid)
     controlsState.vCruise = float(self.v_cruise_kph)
     controlsState.upAccelCmd = float(self.LoC.pid.p)
-    controlsState.uiAccelCmd = float(self.LoC.pid.i)
+    controlsState.uiAccelCmd = float(self.LoC.pid.id)
     controlsState.ufAccelCmd = float(self.LoC.pid.f)
     controlsState.steeringAngleDesiredDeg = float(self.LaC.angle_steers_des)
     controlsState.vTargetLead = float(v_acc)

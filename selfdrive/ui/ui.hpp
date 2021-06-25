@@ -96,10 +96,15 @@ typedef struct {
 
 typedef struct UIScene {
 
+  int dfButtonStatus = 0;
+  int lsButtonStatus = 0;
+  bool mlButtonEnabled;
+
   mat3 view_from_calib;
   bool world_objects_visible;
 
   bool is_rhd;
+  bool end_to_end;
   bool frontview;
 
   std::string alert_text1;
@@ -117,6 +122,7 @@ typedef struct UIScene {
   cereal::ControlsState::Reader controls_state;
   cereal::DriverState::Reader driver_state;
   cereal::DriverMonitoringState::Reader dmonitoring_state;
+  cereal::ModelDataV2::Reader model;
 
   // gps
   int satelliteCount;
@@ -150,6 +156,7 @@ typedef struct UIState {
   std::map<std::string, int> images;
 
   SubMaster *sm;
+  PubMaster *pm;
 
   Sound *sound;
   UIStatus status;
@@ -171,6 +178,7 @@ typedef struct UIState {
   bool ignition;
   bool is_metric;
   bool longitudinal_control;
+  bool ui_debug;
   uint64_t started_frame;
 
   bool sidebar_collapsed;
@@ -179,6 +187,7 @@ typedef struct UIState {
 } UIState;
 
 void ui_init(UIState *s);
+void sa_init(UIState *s, bool full_init);
 void ui_update(UIState *s);
 
 int write_param_float(float param, const char* param_name, bool persistent_param = false);

@@ -11,6 +11,7 @@ import subprocess
 import textwrap
 import time
 import traceback
+from common.op_params import opParams
 
 from multiprocessing import Process
 from typing import Dict
@@ -31,6 +32,7 @@ TOTAL_SCONS_NODES = 1225
 MAX_BUILD_PROGRESS = 70
 WEBCAM = os.getenv("WEBCAM") is not None
 PREBUILT = os.path.exists(os.path.join(BASEDIR, 'prebuilt'))
+KILL_UPDATED = opParams().get('update_behavior').lower().strip() == 'off' or os.path.exists('/data/no_ota_updates')
 
 
 def unblock_stdout():
@@ -117,8 +119,8 @@ def build():
             print("....%d" % i)
             time.sleep(1)
           subprocess.check_call(["scons", "-c"], cwd=BASEDIR, env=env)
-          shutil.rmtree("/tmp/scons_cache", ignore_errors=True)
-          shutil.rmtree("/data/scons_cache", ignore_errors=True)
+          # shutil.rmtree("/tmp/scons_cache", ignore_errors=True)
+          # shutil.rmtree("/data/scons_cache", ignore_errors=True)
         else:
           print("scons build failed after retry")
           sys.exit(1)
@@ -149,6 +151,8 @@ from common.params import Params
 from selfdrive.registration import register
 from selfdrive.launcher import launcher
 
+ThermalStatus = log.DeviceState.ThermalStatus
+
 
 # comment out anything you don't want to run
 managed_processes = {
@@ -177,6 +181,7 @@ managed_processes = {
   "dmonitoringmodeld": ("selfdrive/modeld", ["./dmonitoringmodeld"]),
   "modeld": ("selfdrive/modeld", ["./modeld"]),
   "rtshield": "selfdrive.rtshield",
+  # "lanespeedd": "selfdrive.controls.lib.lane_speed",
 }
 
 daemon_processes = {
@@ -208,7 +213,7 @@ persistent_processes = [
 
 if not PC:
   persistent_processes += [
-    'updated',
+    # 'updated',
     'tombstoned',
   ]
 
@@ -216,6 +221,8 @@ if EON:
   persistent_processes += [
     'sensord',
   ]
+  if not KILL_UPDATED:
+    persistent_processes.append('updated')
 
 if TICI:
   managed_processes["timezoned"] = "selfdrive.timezoned"
@@ -234,6 +241,7 @@ car_started_processes = [
   'locationd',
   'clocksd',
   'logcatd',
+  # 'lanespeedd',
 ]
 
 driver_view_processes = [
@@ -448,6 +456,7 @@ def manager_thread():
   if EON:
     pm_apply_packages('enable')
     start_offroad()
+  spinner.close()
 
   if os.getenv("NOBOARD") is not None:
     del managed_processes["pandad"]
@@ -465,10 +474,11 @@ def manager_thread():
   while 1:
     msg = messaging.recv_sock(device_state_sock, wait=True)
 
-    if msg.deviceState.freeSpacePercent < 5:
+    if msg.deviceState.freeSpacePercent < 5 or msg.deviceState.thermalStatus >= ThermalStatus.red:
       logger_dead = True
 
-    if msg.deviceState.started:
+    run_all = False
+    if msg.deviceState.started or run_all:
       for p in car_started_processes:
         if p == "loggerd" and logger_dead:
           kill_managed_process(p)
@@ -525,9 +535,9 @@ def manager_prepare():
   total = 100.0 - (0 if PREBUILT else MAX_BUILD_PROGRESS)
 
   for i, p in enumerate(managed_processes):
+    prepare_managed_process(p)
     perc = (100.0 - total) + total * (i + 1) / len(managed_processes)
     spinner.update_progress(perc, 100.)
-    prepare_managed_process(p)
 
 def main():
   params = Params()
@@ -566,7 +576,6 @@ def main():
     update_apks()
   manager_init()
   manager_prepare()
-  spinner.close()
 
   if os.getenv("PREPAREONLY") is not None:
     return
